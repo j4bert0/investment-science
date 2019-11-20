@@ -1,0 +1,181 @@
+---
+title: "Efficient frontier"
+author: "Jaakko Wallenius"
+output: 
+  pdf_document: 
+    toc: no
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Mean-variance portfolio theory
+
+## a) Minimum standard deviation portfolio
+
+Lets first define the necessary variables. Let $\Sigma$ be the covariance matrix of the assets and $w$ the (column) vector of asset weights. Now the portfolio variance in matrix notation is $w'\Sigma w$.
+
+Finding the minimum variance portfolio is a constraint optimization problem which can expressed as
+
+$$\underset{w}\min \sigma^2_p=w'\Sigma w$$
+$$s.t.\quad w'1=1$$
+Now formulating the corresponding Lagrangian we get:
+
+$$\begin{bmatrix}2\Sigma &\textbf{1} \\ \textbf{1'} &0 \end{bmatrix}\begin{bmatrix}\textbf{w} \\ \lambda \end{bmatrix} = \begin{bmatrix}\textbf{0} \\ 1 \end{bmatrix}$$
+
+```{r covm}
+var_A <- 0.25**2
+var_B <- 0.2**2
+var_C <- 0.15**2
+
+cov_AB <- -0.25*0.25*0.2
+cov_AC <- 0.3*0.25*0.15
+cov_BC <- 0.4*0.2*0.15
+
+covm <- matrix(c(var_A,cov_AB,cov_AC,cov_AB,var_B,cov_BC,cov_AC,cov_BC,var_C),nrow=3,byrow=TRUE)
+covm
+```
+
+Now solving the Lagrangian (inverting the block matrix) with R
+
+```{r solve}
+# Takes a N-dimensional covariance matrix as parameter (by def. square matrix)
+# Solves Lagrangian system of equations. The system is written as block matrix.
+# Returns vector of asset weights corresponding to the minimum variance portfolio
+solve_min_variance_p <- function(covm) {
+  N <- dim(covm)[1]
+  top.mat <- cbind(2*covm,rep(1,N))
+  bot.vec <- c(rep(1,N),0)
+  mat <-rbind(top.mat,bot.vec)
+  b <- c(rep(0,N),1)
+  z <- solve(mat)%*%b
+  return(z[1:N,1])
+}
+
+weights_minv <- solve_min_variance_p(covm)
+weights_minv
+```
+
+we get weights $w=(0.257,0.361,0.382)$ which sum to 1. With these weights the expected return of the portfolio is $14.37\%$ and the standard deviation is $12.58\%$.
+
+```{r expected_ret}
+mu <- c(0.2,0.15,0.1)
+r_minv <- mu%*%weights_minv
+r_minv
+
+std_minv <- sqrt(t(weights_minv)%*%covm%*%weights_minv)
+std_minv
+```
+
+## b) Efficient portfolio with expected return 18%
+
+Now the optimization problem has another constraint: the portfolio return should be $\tilde{\mu}$:
+
+$$\underset{w}\min \sigma^2_p=w'\Sigma w$$
+$$s.t.\quad w'\textbf{1}=1 \quad and \quad w'\mu=\tilde{\mu}$$
+
+Formulating the corresponding Lagrangian we get:
+$$\begin{bmatrix}2\Sigma &\mu &\textbf{1} \\ \mu' &0 &0\\ \textbf{1'} &0 &0 \end{bmatrix}\begin{bmatrix}\textbf{w} \\ \lambda_1 \\ \lambda_2 \end{bmatrix} = \begin{bmatrix}\textbf{0} \\ \tilde{\mu} \\1 \end{bmatrix}$$
+
+```{r solve2}
+# Takes 3 parameters:
+#   - Target return for the portfolio (mu_t)
+#   - Vector of assets expected returns (mu)
+#   - N-dimensional covariance matrix as parameter (by def. square matrix)
+# Solves Lagrangian system of equations. The system is written as block matrix.
+# Returns vector of asset weights corresponding to the efficient portfolio
+solve_eff_p <- function(mu_t,mu,covm) {
+  N <- dim(covm)[1]
+  top.mat <- cbind(2*covm,mu,rep(1,N))
+  mid.vec <- c(mu,0,0)
+  bot.vec <- c(rep(1,N),0,0)
+  mat <-rbind(top.mat,mid.vec,bot.vec)
+  b <- c(rep(0,N),mu_t,1)
+  z <- solve(mat)%*%b
+  return(z[1:N,1])
+}
+
+weights_18 <- solve_eff_p(0.18,mu,covm)
+weights_18
+```
+
+```{r expected_ret2}
+r_18 <- mu%*%weights_18
+r_18
+
+std_18 <- sqrt(t(weights_18)%*%covm%*%weights_18)
+std_18
+```
+
+The standard deviation of this portfolio is 14.21%.
+
+## c) Portfolio and risk-free asset
+
+If we had a risk free asset available, we could combine an optimal portfolio and the risk free asset (One-fund theorem). The optimal portfolio in this case is found by maximizing the steepness of the tangency line to the efficient frontier:
+
+$$\underset{w}\max \frac{\sum_{i=1}^nw_i(\mu_i-r_f)}{\sqrt{\sum_{i=1}^n\sum_{j=1}^nw_iw_j\sigma_{ij}}}$$
+
+The problem reduces to solving system of equations:
+
+$$\mu_k-r_f=\sum^n_{i=1}v_i\sigma_{ik} \quad k=1,2,3.$$
+
+Where $v_i$ is the unnormalized weight of the asset $i$. The weights (i.e. the optimal portfolio) is found by normalizing these weights.
+
+```{r one_fund}
+# Solving the above system of equations
+r_f <- 0.05
+weights_onef <- solve(covm)%*%(mu-r_f)
+weights_onef_scaled <- weights_onef/sum(weights_onef)
+t(weights_onef_scaled)
+
+r_onef <- mu%*%weights_onef_scaled
+r_onef
+
+std_onef <- sqrt(t(weights_onef_scaled)%*%covm%*%weights_onef_scaled)
+std_onef
+```
+
+We find that the optimal portfolio's return is 19.47% and standard deviation is 15.63%.
+
+## d) Mean-variance diagram
+
+```{r meanvar}
+# Solving the efficient portfolio for returns 0.08 ... 0.3
+# i.e. forming the portfolio curve and efficient frontier
+min_r <- 0.08; max_r <- 0.3
+tmp <- numeric((max_r-min_r)*1000)
+eff_frontier <- data.frame(tmp,tmp)
+colnames(eff_frontier) <- c("Return", "Std")
+i <- 1
+for (r in seq(min_r,max_r,0.001)) {
+  w <- solve_eff_p(r,mu,covm)
+  std <- sqrt(t(w)%*%covm%*%w)
+  eff_frontier[i,1] <- r
+  eff_frontier[i,2] <- std
+  i <- i + 1
+}
+```
+
+```{r diagram}
+plot(eff_frontier$Std,eff_frontier$Return,type="l",main="Mean-variance diagram",
+     xlab="Standard deviation",ylab="Return",xlim=c(0,0.4),ylim=c(0,0.4))
+
+lines(std_minv,r_minv,type="p",pch=20,col="red",cex=2) # Minimum variance
+lines(std_18,r_18,type="p",pch=20,col="blue",cex=2) # Efficient portfolio for 18% target return
+
+# Assets
+lines(0.25,0.2,type="p",pch=20,col="green",cex=2) # A
+lines(0.2,0.15,type="p",pch=20,col="green",cex=2) # B
+lines(0.15,0.1,type="p",pch=20,col="green",cex=2) # C
+
+# One-fund optimal portfolio
+lines(std_onef,r_onef,type="p",pch=20,col="green",cex=2) # C
+
+text(c(0.25,0.2,0.15,std_onef),c(0.2,0.15,0.1,r_onef),labels=c("A","B","C","OPT"),cex=0.7,pos=3)
+
+abline(a=r_f,b=(r_onef-r_f)/std_onef,col="green")
+```
+
+The above plot contains the minimum variance portfolio (red) and the 18%-target-return portfolio (blue) from parts a) and b) respectively. Also we can see that the optimal portfolio can be found from the tangency line of the efficient frontier. 
